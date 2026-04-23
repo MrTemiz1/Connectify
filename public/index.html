@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatApp | Real-time</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root { --green: #00a884; --bg: #f0f2f5; --light-green: #d9fdd3; }
+        * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI', sans-serif; }
+        
+        body { background: #dadbd3; height: 100vh; display: flex; justify-content: center; align-items: center; }
+
+        /* Giriş Ekranı */
+        #auth-screen { background: white; padding: 30px; border-radius: 10px; width: 350px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); text-align: center; z-index: 10; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; outline: none; }
+        button { width: 100%; padding: 12px; background: var(--green); color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        
+        /* Ana Panel */
+        #chat-app { width: 95vw; height: 90vh; background: white; display: none; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-radius: 5px; overflow: hidden; }
+        
+        .sidebar { width: 30%; border-right: 1px solid #ddd; display: flex; flex-direction: column; background: #fff; }
+        .header { background: #f0f2f5; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        
+        .chat-area { flex: 1; display: flex; flex-direction: column; background: #efeae2 url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); }
+        
+        #messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        
+        /* Mesaj Balonları & Animasyon */
+        .msg { padding: 8px 15px; border-radius: 8px; max-width: 70%; font-size: 14px; position: relative; animation: pop 0.2s ease-out; }
+        @keyframes pop { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        
+        .sent { align-self: flex-end; background: var(--light-green); }
+        .received { align-self: flex-start; background: white; }
+        .time { font-size: 10px; color: #667781; float: right; margin: 5px 0 0 10px; }
+
+        .input-box { background: #f0f2f5; padding: 10px 15px; display: flex; gap: 10px; align-items: center; }
+        .input-box input { flex: 1; margin: 0; border: none; }
+        
+        .hidden { display: none; }
+        .my-id-display { font-size: 11px; color: var(--green); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <!-- AUTH SCREEN -->
+    <div id="auth-screen">
+        <h2 id="title" style="color: var(--green); margin-bottom: 10px;">ChatApp</h2>
+        <input type="email" id="email" placeholder="E-posta">
+        <input type="password" id="password" placeholder="Şifre">
+        <button onclick="handleAuth()" id="btn-auth">Giriş Yap</button>
+        <p onclick="toggleMode()" id="toggle-text" style="margin-top:15px; cursor:pointer; font-size:14px; color:#54656f;">Hesabın yok mu? Kayıt Ol</p>
+    </div>
+
+    <!-- MAIN APP -->
+    <div id="chat-app">
+        <div class="sidebar">
+            <div class="header">
+                <div>
+                    <div style="font-weight: bold; font-size: 14px;" id="display-email">E-posta</div>
+                    <div class="my-id-display" id="display-id">ID: ...</div>
+                </div>
+                <i class="fas fa-sign-out-alt" onclick="location.reload()" style="cursor:pointer;"></i>
+            </div>
+            <div style="padding: 10px;">
+                <input type="text" id="target-id" placeholder="Mesaj atılacak ID girin..." style="background: #f0f2f5;">
+                <button onclick="startChat()">Sohbet Başlat</button>
+            </div>
+        </div>
+        <div class="chat-area">
+            <div class="header" id="chat-header">Sohbet seçilmedi</div>
+            <div id="messages"></div>
+            <div class="input-box hidden" id="msg-input-area">
+                <input type="text" id="msg-text" placeholder="Bir mesaj yazın...">
+                <button onclick="send()" style="width: 50px;"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let myUser = null;
+        let activeChatId = null;
+        let isLoginMode = true;
+
+        function toggleMode() {
+            isLoginMode = !isLoginMode;
+            document.getElementById('title').innerText = isLoginMode ? "Giriş Yap" : "Kayıt Ol";
+            document.getElementById('btn-auth').innerText = isLoginMode ? "Giriş Yap" : "Kayıt Ol";
+            document.getElementById('toggle-text').innerText = isLoginMode ? "Hesabın yok mu? Kayıt Ol" : "Zaten üye misin? Giriş Yap";
+        }
+
+        function handleAuth() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const event = isLoginMode ? 'login' : 'register';
+            socket.emit(event, { email, password });
+        }
+
+        socket.on('auth-success', (user) => {
+            myUser = user;
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('chat-app').style.display = 'flex';
+            document.getElementById('display-email').innerText = user.email;
+            document.getElementById('display-id').innerText = "ID: " + user.customId;
+        });
+
+        socket.on('auth-error', (msg) => alert(msg));
+
+        function startChat() {
+            activeChatId = document.getElementById('target-id').value;
+            if(!activeChatId) return;
+            document.getElementById('chat-header').innerText = "Sohbet: " + activeChatId;
+            document.getElementById('msg-input-area').classList.remove('hidden');
+            document.getElementById('messages').innerHTML = ""; // Ekranı temizle
+        }
+
+        function send() {
+            const text = document.getElementById('msg-text').value;
+            if(!text || !activeChatId) return;
+            socket.emit('send-message', {
+                senderId: myUser.customId,
+                receiverId: activeChatId,
+                text: text
+            });
+            document.getElementById('msg-text').value = "";
+        }
+
+        socket.on('receive-message', (data) => {
+            // Eğer mesaj benim aktif olduğum kişiyle ilgiliyse ekrana bas
+            if (data.senderId === activeChatId || data.senderId === myUser.customId) {
+                const isMine = data.senderId === myUser.customId;
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `msg ${isMine ? 'sent' : 'received'}`;
+                msgDiv.innerHTML = `${data.text} <span class="time">${data.time}</span>`;
+                document.getElementById('messages').appendChild(msgDiv);
+                const container = document.getElementById('messages');
+                container.scrollTop = container.scrollHeight;
+            }
+        });
+    </script>
+</body>
+</html>
